@@ -2,15 +2,25 @@ import streamlit as st
 import os
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.impute import KNNImputer
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier
+from collections import defaultdict
+#outliers
+from scipy.stats.mstats import winsorize
+#encoding
+from sklearn.preprocessing import OrdinalEncoder
+#scaling
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, PowerTransformer
 
 # ---- FUNCTIONS ----
 
 # Author : https://www.kaggle.com/gemartin/load-data-reduce-memory-usage and adapted to be able to check if the column is actually a float
 #or is an error like a code being a float column - if the column has Nan it will be still a float and will give us a warning.
+
+final_features = []
+
 
 def reduce_memory_usage(df):
     """ 
@@ -65,8 +75,6 @@ def reduce_memory_usage(df):
     
     return df
 
-
-
 def scale_data(df, columns, method="min-max"):
     """
     Available methods: 'min-max', 'standardization', 'log', 'power'.
@@ -93,6 +101,11 @@ def scale_data(df, columns, method="min-max"):
 
 
 # ---- PREPARATION PIP ----
+
+columns_to_treat = ['AvgOccupancy','ADR','RevenuePerPersonNight',
+                    'OtherRevenue','Total_Revenue','LodgingRevenue',
+                    'SpendingPerBooking','PersonsNights','AverageLeadTime',
+                    'RoomNights','TotalSpecialRequests','Age']
 
 outlier_criteria = {"AvgOccupancy": (1, 6), 
                     "ADR": (0, 1400),
@@ -161,10 +174,13 @@ country_map = {
 days_order = ['Newly Registered', 'Developing', 'Established', 'Longstanding']
 lead_order = ['Last-minute', 'Moderate Planners', 'Advance Planners', 'Long-term Planners']
 
+def one_hot_encode(df, columns):
+    
+    df_encoded = pd.get_dummies(df, columns=columns, drop_first=False, dtype=int)
+    return df_encoded
 
 
-def pipeline(df, outlier_criteria, days_order, lead_order, columns_to_treat, features_to_scale, winsorization=True, scaling_method='standardization'):
-    df_preparation = df.copy()
+def pipeline(df, df_w_clusters, outlier_criteria, days_order, lead_order, columns_to_treat, features_to_scale, winsorization=True, scaling_method='min-max'):
 
     invalid_rows = []
 
@@ -181,249 +197,126 @@ def pipeline(df, outlier_criteria, days_order, lead_order, columns_to_treat, fea
             invalid_rows.append((idx, "Your record has no RoomNights, please confirm this line."))
         elif row['PersonsNights'] == 0:
             invalid_rows.append((idx, "Your record has no PersonsNights, please confirm this line."))
-        elif row[dow_columns].sum() != row.filter(regex=r'^HR_\d').sum():
-            invalid_rows.append((idx, "Your record's total orders in all hours and all days do not match, please confirm this line."))
-        elif row['first_order'] > row['last_order']:
-            invalid_rows.append((idx, "Your record's has first_order after last_order, please confirm this line."))
+        elif row['LodgingRevenue'] == 0 and row['OtherRevenue'] == 0:
+            invalid_rows.append((idx, "Your record's total revenue is 0, please confirm this line."))
+        elif row['RoomNights'] > row['PersonsNights']:
+            invalid_rows.append((idx, "PersonNights should be greater than or equal to RoomNights. Please check this line."))
 
     # If there are invalid rows, stop the process and show warnings
     if invalid_rows:
         warning_message = "\n".join([f"Row {idx}: {message}" for idx, message in invalid_rows])
         raise ValueError(f"Invalid records detected:\n{warning_message}")
     
-        # Step 1: Fit the scaler and transform
+    df_preparation = df.copy()
+    
+    # Step 1: Scale 'Age' using StandardScaler
     scaler = StandardScaler()
-    df_w_clusters['Age_scaled'] = scaler.fit_transform(df_w_clusters[['Age']])
-    df['Age_scaled'] = scaler.transform(df[['Age']])
+    scaler.fit(df_w_clusters[['Age']])  # Fit only on df_w_clusters
+    df_preparation['Age_scaled'] = scaler.transform(df_preparation[['Age']])  # Transform df_preparation
 
-    # Step 2: Apply KNN Imputation on the scaled data
+    # Step 2: KNN Imputation on df_preparation
     knn_imputer = KNNImputer(n_neighbors=5)
-    df_w_clusters['Age_scaled'] = knn_imputer.fit(df_w_clusters[['Age_scaled']])
-    df['Age_scaled'] = knn_imputer.fit_transform(df[['Age_scaled']])
+    knn_imputer.fit(df_w_clusters[['Age_scaled']])  # Fit on df_w_clusters
+    df_preparation['Age_scaled'] = knn_imputer.transform(df_preparation[['Age_scaled']])  # Transform only df_preparation
 
-    # Step 3: Reverse the scaling to get the original age range
-    df_w_clusters['Age'] = scaler.inverse_transform(df_w_clusters[['Age_scaled']])
-    df['Age'] = scaler.inverse_transform(df[['Age_scaled']])
+    # Step 3: Reverse scaling to get back 'Age'
+    df_preparation['Age'] = scaler.inverse_transform(df_preparation[['Age_scaled']])
 
-    # Optional: Drop the intermediate scaled column if no longer needed
-    df_w_clusters.drop(columns=['Age_scaled'], inplace=True)
-    df.drop(columns=['Age_scaled'], inplace=True)
+    # Step 4: Drop the intermediate scaled column
+    df_preparation.drop(columns=['Age_scaled'], inplace=True)
+
+    #Feature engineering
+    df_preparation['BookingFrequency'] = df_preparation['BookingsCheckedIn'] + df_preparation['BookingsCanceled'] + df_preparation['BookingsNoShowed']
+    df_preparation['BookingSuccessRate'] = np.where(df_preparation['BookingFrequency'] == 0, 0,
+                                                df_preparation['BookingsCheckedIn'] / df_preparation['BookingFrequency'])
+    total_special_requests = df_preparation['SRHighFloor'] + df_preparation['SRLowFloor'] + df_preparation['SRAccessibleRoom'] + \
+                         df_preparation['SRMediumFloor'] + df_preparation['SRBathtub'] + df_preparation['SRShower'] + \
+                         df_preparation['SRCrib'] + df_preparation['SRKingSizeBed'] + df_preparation['SRTwinBed'] + \
+                         df_preparation['SRNearElevator'] + df_preparation['SRAwayFromElevator'] + \
+                         df_preparation['SRNoAlcoholInMiniBar'] + df_preparation['SRQuietRoom']
+    df_preparation['TotalSpecialRequests'] = total_special_requests
+    df_preparation['SRFloor'] = df_preparation['SRHighFloor'] + df_preparation['SRMediumFloor'] + df_preparation['SRLowFloor']
+    df_preparation['SRBed'] = df_preparation['SRKingSizeBed'] + df_preparation['SRTwinBed'] + df_preparation['SRCrib']
+    df_preparation['SRNoisePreference'] = df_preparation['SRNearElevator'] + df_preparation['SRAwayFromElevator'] + df_preparation['SRQuietRoom']
+    df_preparation['SRBathroom'] = df_preparation['SRBathtub'] + df_preparation['SRShower']
+    df_preparation['Total_Revenue'] = df_preparation['LodgingRevenue'] + df_preparation['OtherRevenue']
+    df_preparation['SpendingPerBooking'] = df_preparation['Total_Revenue'] / df_preparation['BookingFrequency'] 
+    df_preparation['RevenuePerPersonNight'] = np.where(df_preparation['PersonsNights'] == 0, 0, df_preparation['Total_Revenue'] / df_preparation['PersonsNights'])
+    df_preparation['AvgOccupancy'] = np.where(df_preparation['RoomNights'] == 0, 0, df_preparation['PersonsNights'] / df_preparation['RoomNights'])
+    df_preparation['ADR'] = np.where(df_preparation['RoomNights'] == 0, 0, df_preparation['Total_Revenue'] / df_preparation['RoomNights'])
+    df_preparation['SRFloor'] = (df_preparation['SRFloor'] > 0).astype(int)
+    df_preparation['SRNoisePreference'] = (df_preparation['SRNoisePreference'] > 0).astype(int)
+    df_preparation['SRBed'] = (df_preparation['SRBed'] > 0).astype(int)
     
+    def categorize_booking_frequency(value):
+        if value == 1:
+            return "New Customer"
+        else:
+            return "Returning Customer"
+
+    df_preparation["BookingFrequency"] = df_preparation["BookingFrequency"].apply(categorize_booking_frequency)
+    df_preparation["BookingFrequency"].value_counts(normalize=True)
+
+    # Calculate percentiles for categories
+    days_percentiles = df_w_clusters['DaysSinceCreation'].quantile([0.25, 0.50, 0.75]).tolist() 
+    lead_percentiles = df_w_clusters['AverageLeadTime'].quantile([0.25, 0.50, 0.75]).tolist()
+    days_bins = [0] + days_percentiles + [float('inf')] #[0, 382.0, 717.0, 1019.0, inf]
+    lead_bins = [0] + lead_percentiles + [float('inf')] #[0, 18.0, 59.0, 133.0, inf]
+
+    # Category labels
+    days_labels = ['Newly Registered', 'Developing', 'Established', 'Longstanding']
+    lead_labels = ['Last-minute', 'Moderate Planners', 'Advance Planners', 'Long-term Planners']
+
+    # Categorization
+    df_preparation['DaysSinceCreation_Category'] = pd.cut(df_preparation['DaysSinceCreation'], bins=days_bins, labels=days_labels, include_lowest=True)
+    df_preparation['AverageLeadTime_Category'] = pd.cut(df_preparation['AverageLeadTime'], bins=lead_bins, labels=lead_labels, include_lowest=True)
+
+
     # Remove outliers
-    df_preparation, manual_loss = remove_outliers_manual(df_preparation, outlier_criteria)
+    df_final, manual_loss = remove_outliers_manual(df_preparation, outlier_criteria)
     
-    # Winsorization if enabled
-    if winsorization:
-        df_preparation = apply_winsorization(df_preparation, columns_to_treat)
+    if manual_loss == 100.00:
+        outliers = df_preparation.copy()
 
-    # Encoding
-    df_preparation['Origin'] = df_preparation['Nationality'].map(country_map)
-    df_preparation['Origin'] = df_preparation['Origin'].replace(
-        ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
-    df_preparation['DistributionChannel'] = df_preparation['DistributionChannel'].replace(
+    if len(df_final) > 0:
+    # Winsorization if enabled
+        if winsorization:
+            df_final = apply_winsorization(df_final, columns_to_treat)
+
+        # Encoding
+        df_final['Origin'] = df_final['Nationality'].map(country_map)
+        df_final['Origin'] = df_final['Origin'].replace(
+            ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
+        df_to_encode = df_final.copy()
+    
+    else:
+        # Encoding
+        outliers['Origin'] = outliers['Nationality'].map(country_map)
+        outliers['Origin'] = outliers['Origin'].replace(
+            ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
+        df_to_encode = outliers.copy()
+
+
+    df_to_encode['DistributionChannel'] = df_to_encode['DistributionChannel'].replace(
         ['Travel Agent/Operator', 'GDS Systems'], 'Agent/Operator & GDS Systems')
-    df_preparation['BookingFrequency_bin'] = df_preparation['BookingFrequency'].map(
+    df_to_encode['BookingFrequency_bin'] = df_to_encode['BookingFrequency'].map(
         {'New Customer': 0, 'Returning Customer': 1})
     
     # Ordinal Encoding
     encoder = OrdinalEncoder(categories=[days_order, lead_order])
-    df_preparation[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = encoder.fit_transform(
-        df_preparation[['DaysSinceCreation_Category', 'AverageLeadTime_Category']])
-    df_preparation[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = df_preparation[
+    df_to_encode[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = encoder.fit_transform(
+        df_to_encode[['DaysSinceCreation_Category', 'AverageLeadTime_Category']])
+    df_to_encode[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = df_to_encode[
         ['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']].astype(int)
     
     # One-hot Encoding
-    encoded_df = one_hot_encode(df_preparation, ['DistributionChannel', 'Origin'])
+    encoded_df = one_hot_encode(df_to_encode, ['DistributionChannel', 'Origin'])
     
     # Scaling
     scaled_df = scale_data(encoded_df, features_to_scale, method=scaling_method)
     
-    return scaled_df
+    return df_final, outliers, scaled_df
 
-
-
-
-
-
-
-
-def prepare_data(df):
-    # Step 1: Drop duplicates
-    # df.drop_duplicates(inplace=True)
-
-    # Step 2: Fill missing values for `first_order`
-    df['first_order'] = df['first_order'].fillna(0)
-
-    # Step 3: Handle `HR_0` null values
-    dow_columns = df.filter(regex=r'^DOW_\d').columns.tolist()
-    hr_columns_excl_hr0 = ['HR_' + str(i) for i in range(1, 24)]
-    df.loc[df['HR_0'].isnull(), 'HR_0'] = (
-        df[dow_columns].sum(axis=1) - df[hr_columns_excl_hr0].sum(axis=1)
-    )
-
-    # Step 4: Replace "-" in `last_promo` and `customer_region`
-    df["last_promo"] = df["last_promo"].replace("-", "No Promo")
-    most_frequent_region = df.loc[df["customer_region"] != "-", "customer_region"].mode()[0]
-    df["customer_region"] = df["customer_region"].replace("-", most_frequent_region)
-
-    # Step 5: KNN Imputation for `customer_age`
-    scaler = StandardScaler()
-    df['customer_age_scaled'] = scaler.fit_transform(df[['customer_age']])
-    knn_imputer = KNNImputer(n_neighbors=5)
-    df['customer_age_scaled'] = knn_imputer.fit_transform(df[['customer_age_scaled']])
-    df['customer_age'] = scaler.inverse_transform(df[['customer_age_scaled']])
-    df.drop(columns=['customer_age_scaled'], inplace=True)
-
-    # Step 6: Filter rows with specific conditions and provide warnings
-    invalid_rows = []
-
-    for idx, row in df.iterrows():
-        if row['product_count'] == 0:
-            invalid_rows.append((idx, "Your record has a 'product_count' of 0, please confirm this line."))
-        elif row['vendor_count'] == 0:
-            invalid_rows.append((idx, "Your record has a 'vendor_count' of 0, please confirm this line."))
-        elif row.filter(regex=r'^CUI_').sum() == 0:
-            invalid_rows.append((idx, "Your record has a total cuisine spending of 0, please confirm this line."))
-        elif row.filter(regex=r'^HR_\d').sum() == 0:
-            invalid_rows.append((idx, "Your record has no orders in any hour, please confirm this line."))
-        elif row[dow_columns].sum() == 0:
-            invalid_rows.append((idx, "Your record has no orders on any day, please confirm this line."))
-        elif row[dow_columns].sum() != row.filter(regex=r'^HR_\d').sum():
-            invalid_rows.append((idx, "Your record's total orders in all hours and all days do not match, please confirm this line."))
-        elif row['first_order'] > row['last_order']:
-            invalid_rows.append((idx, "Your record's has first_order after last_order, please confirm this line."))
-
-    # If there are invalid rows, stop the process and show warnings
-    if invalid_rows:
-        warning_message = "\n".join([f"Row {idx}: {message}" for idx, message in invalid_rows])
-        raise ValueError(f"Invalid records detected:\n{warning_message}")
-
-    # Step 7: Apply manual filtering
-    def apply_manual_filtering(df):
-        outliers_manual = (
-            (df['CUI_OTHER'] <= 122) &
-            (df['CUI_Italian'] <= 168) &
-            (df['CUI_Japanese'] <= 130) &
-            (df['CUI_Beverages'] <= 139) &
-            (df["CUI_Street Food / Snacks"] <= 203) &
-            (df['CUI_Chinese'] <= 100) &
-            (df['CUI_American'] <= 121) &
-            (df['CUI_Asian'] <= 252) &
-            (df['CUI_Indian'] <= 109) &
-            (df['CUI_Chicken Dishes'] <= 50) &
-            (df["CUI_Thai"] <= 64) &
-            (df['CUI_Noodle Dishes'] <= 70) &
-            (df['CUI_Desserts'] <= 74) &
-            (df['CUI_Healthy'] <= 80) &
-            (df['CUI_Cafe'] <= 90) &
-            (df["DOW_0"] <= 11) &
-            (df["DOW_1"] <= 13) &
-            (df["DOW_3"] <= 14) &
-            (df["DOW_5"] <= 15) &
-            (df["DOW_6"] <= 14) &
-            (df["HR_0"] <= 9) &
-            (df["HR_1"] <= 9) &
-            (df["HR_2"] <= 10) &
-            (df["HR_4"] <= 10) &
-            (df["HR_5"] <= 5) &
-            (df["HR_7"] <= 9) &
-            (df["HR_8"] <= 10) &
-            (df["HR_9"] <= 11) &
-            (df["HR_10"] <= 17) &
-            (df["HR_11"] <= 14) &
-            (df["HR_12"] <= 14) &
-            (df["HR_13"] <= 12) &
-            (df["HR_14"] <= 11) &
-            (df["HR_15"] <= 10) &
-            (df["HR_16"] <= 13) &
-            (df["HR_17"] <= 15) &
-            (df["HR_18"] <= 15) &
-            (df["HR_19"] <= 13) &
-            (df["HR_20"] <= 10) &
-            (df["HR_21"] <= 6) &
-            (df["HR_22"] <= 7) &
-            (df["HR_23"] <= 6) &
-            (df['vendor_count'] <= 32) &
-            (df['product_count'] <= 97) &
-            (df['is_chain'] <= 40)
-        )
-        outliers = df[~outliers_manual]
-        return df[outliers_manual], outliers
-
-    df, outliers = apply_manual_filtering(df)
-    
-    def feature_engineering(df):
-        # Step 8: Add derived features
-        df.rename(columns=rename_dict, inplace=True)
-        cuisine_columns = [col for col in df.columns if col.startswith('CUI_')]
-        dow_columns = [col for col in df.columns if col.endswith('_Orders')]
-        hour_columns = [col for col in df.columns if col.startswith('HR_')]
-
-        df['antiguity'] = df['last_order'].max() - df['first_order']
-        df['R_recency_days'] = df['last_order'].max() - df['last_order']
-        df['F_total_orders'] = df[dow_columns].sum(axis=1)
-        df['M_total_spend'] = df[cuisine_columns].sum(axis=1)
-        df['avg_days_btw_orders'] = df['antiguity'] / df['F_total_orders'].replace(0, 1)
-        df['avg_spend_p_order'] = df['M_total_spend'] / df['F_total_orders'].replace(0, 1)
-        df['avg_products_p_order'] = df['product_count'] / df['F_total_orders'].replace(0, 1)
-        df['cuisine_diversity'] = df[cuisine_columns].gt(0).sum(axis=1)
-        df['chain_preference_ratio'] = df['is_chain'] / df['F_total_orders'].replace(0, 1)
-        df[[f'{col}_spending_dist' for col in cuisine_columns]] = (
-            df[cuisine_columns].div(df['M_total_spend'], axis=0).fillna(0).round(2)
-        )
-        df['promo_used'] = df['last_promo'].apply(lambda x: 1 if x != 'No Promo' else 0)
-        df['weekday_avg_orders'] = df[['Mon_Orders', 'Tue_Orders', 'Wed_Orders', 'Thu_Orders', 'Fri_Orders']].mean(axis=1)
-        df['weekend_avg_orders'] = df[['Sun_Orders', 'Sat_Orders']].mean(axis=1)
-        df['breakfast_orders'] = df[['HR_5', 'HR_6', 'HR_7', 'HR_8', 'HR_9', 'HR_10']].sum(axis=1)
-        df['lunch_orders'] = df[['HR_11', 'HR_12', 'HR_13', 'HR_14']].sum(axis=1)
-        df['afternoon_snack_orders'] = df[['HR_15', 'HR_16', 'HR_17']].sum(axis=1)
-        df['dinner_orders'] = df[['HR_18', 'HR_19', 'HR_20', 'HR_21']].sum(axis=1)
-        df['late_night_orders'] = df[['HR_22', 'HR_23', 'HR_0', 'HR_1', 'HR_2', 'HR_3', 'HR_4']].sum(axis=1)
-        df['day_of_week_diversity'] = df[dow_columns].gt(0).sum(axis=1)
-        df['time_of_day_diversity'] = df[['breakfast_orders', 'lunch_orders', 'afternoon_snack_orders', 'dinner_orders', 'late_night_orders']].gt(0).sum(axis=1)
-        df['vendor_loyalty'] = df['vendor_count'] / df['F_total_orders'].replace(0, 1)
-        
-        return df
-    
-    df = feature_engineering(df)
-    outliers = feature_engineering(outliers)
-
-    # Step 9: Final feature selection
-    def apply_manual_filtering_final(df):
-        outliers_manual = (
-            (df['F_total_orders'] <= 50) &
-            (df['avg_spend_p_order'] <= 100) &
-            (df['breakfast_orders'] <= 25) &
-            (df['lunch_orders'] <= 25) &
-            (df['late_night_orders'] <= 20) &
-            (df['product_count'] <= 70) &
-            (df['weekend_avg_orders'] <= 10)
-        )
-        outliers = df[~outliers_manual]
-        return df[outliers_manual], outliers
-
-    final_df, outliers_final = apply_manual_filtering_final(df)
-    outliers = pd.concat([outliers, outliers_final])
-
-    if len(final_df) > 0:
-        final_df['Asian_Cuisine'] = final_df[Asian_Cuisine].sum(axis=1)
-        final_df['Chinese_Cuisine'] = final_df[Chinese_Cuisine].sum(axis=1)
-        final_df['Western_Cuisine'] = final_df[Western_Cuisine].sum(axis=1)
-        final_df['Other_Cuisine'] = final_df[Other_Cuisine].sum(axis=1)
-        final_df['Weekdays'] = final_df[['Mon_Orders', 'Tue_Orders', 'Wed_Orders', 'Thu_Orders', 'Fri_Orders']].mean(axis=1)
-        scaled_df = encoder_and_scaler("standard", final_df, all_perspectives)
-        scaled_df = reduce_memory_usage(scaled_df)
-        final_df = reduce_memory_usage(final_df)
-    else:
-        outliers['Asian_Cuisine'] = outliers[Asian_Cuisine].sum(axis=1)
-        outliers['Chinese_Cuisine'] = outliers[Chinese_Cuisine].sum(axis=1)
-        outliers['Western_Cuisine'] = outliers[Western_Cuisine].sum(axis=1)
-        outliers['Other_Cuisine'] = outliers[Other_Cuisine].sum(axis=1)
-        outliers['Weekdays'] = outliers[['Mon_Orders', 'Tue_Orders', 'Wed_Orders', 'Thu_Orders', 'Fri_Orders']].mean(axis=1)
-        scaled_df = pd.DataFrame() 
-        outliers = reduce_memory_usage(outliers)
-    
-    return scaled_df, final_df, outliers
 
 def extract_column_info(df):
     """
@@ -468,13 +361,14 @@ def load_data():
     """
     #--- ORIGINAL DATA / SYSTEM DATA TO EXTRACT COLUMN TYPES ------
 
-    data_url = "https://raw.githubusercontent.com/CatarinaGN/DM_interface_design/refs/heads/main/data/DM2425_ABCDEats_DATASET.csv"
-    df_original = pd.read_csv(data_url, sep=',')
-    data_url_w_clusters = "https://raw.githubusercontent.com/CatarinaGN/DM_interface_design/refs/heads/main/data/DM2425_ABCDEats_DATASET_w_Clusters.csv"
-    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=',', index_col='customer_id')
+    data_url = r"data/Case1_HotelCustomerSegmentation.csv"  # Use raw string or forward slashes
+    df_original = pd.read_csv(data_url, sep=';', index_col='ID')  # Corrected index assignment
+    df_original.drop(columns=['NameHash', 'DocIDHash', 'MarketSegment'], inplace=True)
+    data_url_w_clusters = "data\Case1_HotelCustomerSegmentation.csv"
+    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=';')
 
     # Set customer_id as the index 
-    df_original = df_original.set_index('ID', inplace = True)
+    #df_original = df_original.set_index('ID', inplace = True)
 
     return df_original, df_w_clusters
 
@@ -499,12 +393,14 @@ def extract_column_info(df):
         # Check for numerical columns
         elif np.issubdtype(df[col].dtype, np.number):
         
-            if col.startswith("HR_"): 
-                column_info[col] = (0, 50)
-            elif col.startswith("DOW_"):  
-                column_info[col] = (0, 50)
-            elif col.startswith("CUI_"):  
-                column_info[col] = (0, 500)
+            if col.startswith("SR"): 
+                column_info[col] = (0, 1)
+            elif col.startswith("Age"):
+                column_info[col] = (0, df[col].max())
+            elif col.startswith("AverageLeadTime"):
+                column_info[col] = (0, df[col].max())
+            elif col.startswith("DaysSinceCreation"):
+                column_info[col] = (0, df[col].max())
             elif not df[col].dropna().empty:
                 column_info[col] = (df[col].min(), df[col].max())
             else:
@@ -521,10 +417,11 @@ def extract_column_info(df):
 # ---- Main Application ----
 def main():
     # Extract column information for inputs
-    column_info = extract_column_info(df_original)
-    #st.write("Loaded DataFrame:", df.head())
-    #st.write("Column Info Extracted:", column_info)
 
+    #st.write("Loaded DataFrame:", df_original.head())
+    column_info = extract_column_info(df_original)
+    
+    #st.write("Column Info Extracted:", column_info)
 
     st.write("### Enter Customer Details")
     input_data = {}
@@ -589,25 +486,24 @@ def main():
             st.write("Your Input:", input_df)
             # Preprocess the input data
             # Assuming prepare_data is defined elsewhere
-            scaled_input, final_input, outlier = prepare_data(input_df)
+            scaled_input, final_input, outlier = pipeline(input_df)
            
             if len(outlier) == 0:
                 st.write("Data for Prediction (after transformation):", final_input.head())
                 # Find the nearest cluster in the dataset
-                # Assuming all_perspectives is defined elsewhere
-                X_clusters = df_w_clusters[all_perspectives]
+                X_clusters = df_w_clusters[final_features]
                 y_clusters = df_w_clusters['final_labels']
 
                 # Measure distance and predict
-                cluster_distances = ((X_clusters - final_input[all_perspectives].values) ** 2).sum(axis=1)
+                cluster_distances = ((X_clusters - final_input[final_features].values) ** 2).sum(axis=1)
                 closest_cluster = y_clusters.loc[cluster_distances.idxmin()]
                 st.success(f"The record belongs to Cluster: {closest_cluster}")
             else:
                 # Handle outlier by reclassification
                 st.warning("Your record is an outlier. Reclassification using Decision Tree in progress...")
-                st.write("Data for Prediction (after transformation):", outlier[all_perspectives].head())
+                st.write("Data for Prediction (after transformation):", outlier[final_features].head())
                 # Prepare data for decision tree
-                all_features = df_w_clusters[all_perspectives]
+                all_features = df_w_clusters[final_features]
                 all_labels = df_w_clusters['final_labels']
 
                 X_train, X_test, y_train, y_test = train_test_split(
@@ -621,7 +517,7 @@ def main():
                 dt.fit(X_train, y_train)
 
                 # Predict outlier cluster
-                outlier['final_labels'] = dt.predict(outlier[all_perspectives])
+                outlier['final_labels'] = dt.predict(outlier[final_features])
                 st.success(f"The record was reclassified to Cluster: {outlier['final_labels'][0]}")
 
                 # Show model performance
