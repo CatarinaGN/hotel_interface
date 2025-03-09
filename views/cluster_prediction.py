@@ -492,7 +492,7 @@ def main():
                 st.write("Data for Prediction (after transformation):", final_input.head())
                 # Find the nearest cluster in the dataset
                 X_clusters = df_w_clusters[final_features]
-                y_clusters = df_w_clusters['final_labels']
+                y_clusters = df_w_clusters['KmLabels']
 
                 # Measure distance and predict
                 cluster_distances = ((X_clusters - final_input[final_features].values) ** 2).sum(axis=1)
@@ -504,7 +504,7 @@ def main():
                 st.write("Data for Prediction (after transformation):", outlier[final_features].head())
                 # Prepare data for decision tree
                 all_features = df_w_clusters[final_features]
-                all_labels = df_w_clusters['final_labels']
+                all_labels = df_w_clusters['KmLabels']
 
                 X_train, X_test, y_train, y_test = train_test_split(
                     all_features, all_labels, test_size=0.3, random_state=5
