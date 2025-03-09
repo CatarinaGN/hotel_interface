@@ -13,153 +13,239 @@ from sklearn.tree import DecisionTreeClassifier
 #or is an error like a code being a float column - if the column has Nan it will be still a float and will give us a warning.
 
 def reduce_memory_usage(df):
-    """Iterate through all the columns of a dataframe and modify the data type to reduce memory usage.
-       Uses 32-bit types as the minimum size for optimization."""
+    """ 
+    Optimize data types to reduce memory usage:
+    - Converts integers to the smallest possible int type.
+    - Converts floats to the smallest possible float type (at least float32).
+    - Converts object columns to category if unique values are below a threshold.
+    ✅ Evita float16 para prevenir erros de overflow/underflow.
+    ✅ Mantém os float como float32 pelo menos, garantindo compatibilidade com cálculos estatísticos.
+    """
     df = df.copy()
-    start_mem = df.memory_usage().sum() / 1024**2
-    print(f"Memory usage of dataframe is {start_mem:.2f} MB")
-    
+    start_mem = df.memory_usage(deep=True).sum() / 1024**2
+    print(f"Initial memory usage: {start_mem:.2f} MB")
+
     for col in df.columns:
         col_type = df[col].dtype
 
         # Skip categorical columns
-        if pd.api.types.is_categorical_dtype(col_type):
+        if isinstance(col_type, pd.CategoricalDtype):
             continue
 
+        # Optimize integer columns
         if np.issubdtype(col_type, np.integer):
-            c_min = df[col].min()
-            c_max = df[col].max()
-            if c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+            c_min, c_max = df[col].min(), df[col].max()
+            if c_min >= np.iinfo(np.int8).min and c_max <= np.iinfo(np.int8).max:
+                df[col] = df[col].astype(np.int8)
+            elif c_min >= np.iinfo(np.int16).min and c_max <= np.iinfo(np.int16).max:
+                df[col] = df[col].astype(np.int16)
+            elif c_min >= np.iinfo(np.int32).min and c_max <= np.iinfo(np.int32).max:
                 df[col] = df[col].astype(np.int32)
             else:
                 df[col] = df[col].astype(np.int64)
-        
+
+        # Optimize float columns (avoid float16 to prevent precision issues)
         elif np.issubdtype(col_type, np.floating):
-            c_min = df[col].min()
-            c_max = df[col].max()
-            # Check if the column contains NaN values
-            if not df[col].isna().any():
-                # Check if all values are integers
-                if (df[col] % 1 == 0).all():
-                    # Convert to nullable integer type if compatible
-                    if c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
-                        df[col] = df[col].astype(np.int32)
-                    else:
-                        df[col] = df[col].astype(np.int64)
-                else:
-                    # Optimize as float32 if range allows
-                    if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
-                        df[col] = df[col].astype(np.float32)
-                        print(f"Column '{col}' converted to float32")
-                    else:
-                        print(f"Column '{col}' remains as float64 due to range")
+            c_min, c_max = df[col].min(), df[col].max()
+            if c_min >= np.finfo(np.float32).min and c_max <= np.finfo(np.float32).max:
+                df[col] = df[col].astype(np.float32)
             else:
-                # Optimize as float32 if range allows
-                if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
-                    df[col] = df[col].astype(np.float32)
-                    print(f"Column '{col}' with NaNs converted to float32")
-                else:
-                    print(f"Column '{col}' with NaNs remains as float64 due to range")
-        
-        elif col_type == 'object':
-            # Convert to category if unique values are below a threshold
-            if df[col].nunique() / len(df[col]) < 0.5:
+                df[col] = df[col].astype(np.float64)
+
+        # Convert object columns to category if unique values are below a threshold
+        elif df[col].dtype == 'object':
+            num_unique = df[col].nunique()
+            num_total = len(df[col])
+            if num_unique / num_total < 0.5:  # Convert if unique values < 50% of total rows
                 df[col] = df[col].astype('category')
-    
-    end_mem = df.memory_usage().sum() / 1024**2
-    print(f"Memory usage after optimization is: {end_mem:.2f} MB")
-    print(f"Decreased by {100 * (start_mem - end_mem) / start_mem:.1f}%")
+
+    end_mem = df.memory_usage(deep=True).sum() / 1024**2
+    print(f"Optimized memory usage: {end_mem:.2f} MB")
+    print(f"Memory reduced by {100 * (start_mem - end_mem) / start_mem:.1f}%")
     
     return df
 
-def encoder_and_scaler(scaler, df, numerical_columns):
+
+
+def scale_data(df, columns, method="min-max"):
     """
-    Preprocess data by scaling numerical columns using the specified scaler.
-
-    Args:
-        scaler (str): "standard", "minmax", or "robust" - specifies the scaler to use.
-        numerical_columns (list): List of numerical columns for scaling.
+    Available methods: 'min-max', 'standardization', 'log', 'power'.
     """
-    from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
-    # Define available scalers
-    scalers = {
-        "standard": StandardScaler(),
-        "minmax": MinMaxScaler(),
-        "robust": RobustScaler()}
+    numeric_df = df.copy()
+    
+    if method == "log":
+        numeric_df[columns] = np.log1p(numeric_df[columns])
+    else:
+        scaler = None
+        if method == "min-max":
+            scaler = MinMaxScaler()
+        elif method == "standardization":
+            scaler = StandardScaler()
+        elif method == "power":
+            scaler = PowerTransformer(method="yeo-johnson")
+        else:
+            raise ValueError("Invalid scaling method. Choose from 'min-max', 'standardization', 'log', 'power'.")
+        
+        numeric_df[columns] = scaler.fit_transform(numeric_df[columns]) if scaler else numeric_df[columns]
 
-    if scaler not in scalers:
-        raise ValueError("Invalid scaler specified. Choose from 'standard', 'minmax', or 'robust'.")
-
-    scaler_instance = scalers[scaler]
-
-    # Process numerical columns
-    scaled_numerical = None
-    if numerical_columns:
-        scaled_numerical = scaler_instance.fit_transform(df[numerical_columns])
-
-    # Combine transformed data into a DataFrame
-    transformed_dfs = []
-    if scaled_numerical is not None:
-        transformed_dfs.append(pd.DataFrame(scaled_numerical, columns=numerical_columns, index=df.index))
-
-    # Include any columns not transformed
-    other_columns = df.drop(columns=numerical_columns, errors='ignore')
-    if not other_columns.empty:
-        transformed_dfs.append(other_columns)
-
-    # Concatenate all parts into a single DataFrame
-    transformed_df = pd.concat(transformed_dfs, axis=1)
-
-    return transformed_df
+    return numeric_df
 
 
 # ---- PREPARATION PIP ----
 
-rename_dict = {
-    'DOW_0': 'Sun_Orders',
-    'DOW_1': 'Mon_Orders',
-    'DOW_2': 'Tue_Orders',
-    'DOW_3': 'Wed_Orders',
-    'DOW_4': 'Thu_Orders',
-    'DOW_5': 'Fri_Orders',
-    'DOW_6': 'Sat_Orders'
+outlier_criteria = {"AvgOccupancy": (1, 6), 
+                    "ADR": (0, 1400),
+                    "RevenuePerPersonNight": (0, 2000), 
+                    "Total_Revenue": (0, 20000),
+                    "LodgingRevenue": (0, 20000), 
+                    "Total_Revenue": (0, 8000),
+                    "SpendingPerBooking": (0, 16000), 
+                    "PersonsNights": (0, 175), 
+                    "RoomNights": (0, 175)}
+
+def remove_outliers_manual(df, conditions):
+    df_filtered = df.copy()
+    initial_rows = len(df_filtered)
+
+    for column, (lower, upper) in conditions.items():
+        df_filtered = df_filtered[(df_filtered[column] >= lower) & (df_filtered[column] <= upper)]
+
+    data_loss = (1 - len(df_filtered) / initial_rows) * 100
+    return df_filtered, round(data_loss, 2)
+
+
+def apply_winsorization(df, numeric_columns, limits=(0, 0.025)):
+    df_winsorized = df.copy()
+    
+    for col in numeric_columns:
+        df_winsorized[col] = winsorize(df_winsorized[col], limits=limits)
+    
+    return df_winsorized
+
+country_map = {
+    'BRA': 'South_America','CHE': 'Other_Europe','FRA': 'France','DEU': 'Germany', 'CZE': 'Other_Europe',
+    'AUT': 'Other_Europe','JPN': 'Asia','BEL': 'Other_Europe','GBR': 'United Kingdom','USA': 'North_America',
+    'ESP': 'Other_Europe','PRT': 'Portugal','POL': 'Other_Europe','CHL': 'South_America','HUN': 'Other_Europe',
+    'ISR': 'Asia','NLD': 'Other_Europe','MEX': 'North_America','SWE': 'Other_Europe','UKR': 'Other_Europe',
+    'ARG': 'South_America','ITA': 'Other_Europe','GEO': 'Other_Europe','IRL': 'Other_Europe','ECU': 'South_America',
+    'NOR': 'Other_Europe','PAN': 'North_America','DNK': 'Other_Europe','LUX': 'Other_Europe','RUS': 'Other_Europe',
+    'CAN': 'North_America','ZAF': 'Africa','SVN': 'Other_Europe','FIN': 'Other_Europe','IND': 'Asia',
+    'UZB': 'Asia','COD': 'Africa','JOR': 'Asia','ROU': 'Other_Europe','MAR': 'Africa','GRC': 'Other_Europe',
+    'MUS': 'Africa','TUR': 'Asia','CHN': 'Asia','AUS': 'Oceania','SRB': 'Other_Europe','MLT': 'Other_Europe',
+    'SGP': 'Asia','LVA': 'Other_Europe','ISL': 'Other_Europe','EST': 'Other_Europe','VEN': 'South_America',
+    'MWI': 'Africa','IRN': 'Asia','BLR': 'Other_Europe','IDN': 'Asia','KOR': 'Asia','DOM': 'North_America',
+    'CMR': 'Africa','SYR': 'Asia','SVK': 'Other_Europe','COL': 'South_America','PHL': 'Asia','MLI': 'Africa',
+    'MOZ': 'Africa','PER': 'South_America','MYS': 'Asia','HRV': 'Other_Europe','CYP': 'Other_Europe','AGO': 'Africa',
+    'URY': 'South_America','BGD': 'Asia','NZL': 'Oceania','BIH': 'Other_Europe','BGR': 'Other_Europe','ARM': 'Other_Europe',
+    'THA': 'Asia','DZA': 'Africa','CRI': 'North_America','SAU': 'Asia','ATA': 'Antarctica', 'NGA': 'Africa',
+    'AFG': 'Asia','VNM': 'Asia','CAF': 'Africa','LTU': 'Other_Europe','CPV': 'Africa','AZE': 'Other_Europe','KAZ': 'Asia',
+    'GAB': 'Africa','SMR': 'Other_Europe','LBN': 'Asia','TWN': 'Asia','EGY': 'Africa','TGO': 'Africa','BOL': 'South_America',
+    'GTM': 'North_America','JAM': 'North_America','PAK': 'Asia','TUN': 'Africa','UGA': 'Africa','ARE': 'Asia',
+    'QAT': 'Asia','PRI': 'North_America','BRB': 'North_America','GHA': 'Africa','SEN': 'Africa','SLV': 'North_America',
+    'IRQ': 'Asia','BEN': 'Africa','GIB': 'Other_Europe','LIE': 'Other_Europe','MDV': 'Asia','OMN': 'Asia',
+    'ERI': 'Africa','CUB': 'North_America','SDN': 'Africa','MMR': 'Asia','MCO': 'Other_Europe','LAO': 'Asia',
+    'MKD': 'Other_Europe','ALB': 'Other_Europe','ATF': 'Antarctica','ASM': 'Oceania','ATG': 'North_America','KGZ': 'Asia',
+    'RWA': 'Africa','NAM': 'Africa','CIV': 'Africa','LCA': 'North_America','PRY': 'South_America','KIR': 'Oceania',
+    'WLF': 'Oceania','LBY': 'Africa','KEN': 'Africa','GUY': 'South_America','KWT': 'Asia','JEY': 'Other_Europe',
+    'BHR': 'Asia','SUR': 'South_America','CYM': 'North_America','HKG': 'Asia','YEM': 'Asia','COM': 'Africa',
+    'BWA': 'Africa','LKA': 'Asia','FRO': 'Other_Europe','MDG': 'Africa','TJK': 'Asia','AIA': 'North_America',
+    'SYC': 'Africa','TCD': 'Africa','SPM': 'North_America','SLE': 'Africa','SJM': 'Other_Europe','BMU': 'North_America',
+    'SOM': 'Africa','TZA': 'Africa','GRD': 'North_America','TKM': 'Asia','NIC': 'North_America','ABW': 'North_America',
+    'MNE': 'Other_Europe','STP': 'Africa','HTI': 'North_America','NCL': 'Oceania','GNB': 'Africa','PCN': 'Oceania',
+    'VIR': 'North_America','AND': 'Other_Europe','GUF': 'South_America','WSM': 'Oceania','SWZ': 'Africa',
+    'FLK': 'South_America','ETH': 'Africa','ZWE': 'Africa','MRT': 'Africa','DMA': 'North_America','FSM': 'Oceania'
 }
 
-Asian_Cuisine = [
-    'CUI_Asian_spending_dist', 
-    'CUI_Street Food / Snacks_spending_dist',
-    'CUI_Japanese_spending_dist', 
-    'CUI_Desserts_spending_dist',
-    'CUI_Beverages_spending_dist',
-    'CUI_Healthy_spending_dist'
-]
+# correct category order
+days_order = ['Newly Registered', 'Developing', 'Established', 'Longstanding']
+lead_order = ['Last-minute', 'Moderate Planners', 'Advance Planners', 'Long-term Planners']
 
-Chinese_Cuisine = [
-    'CUI_Chinese_spending_dist', 
-    'CUI_Chicken Dishes_spending_dist', 
-    'CUI_Noodle Dishes_spending_dist'
-]
 
-Western_Cuisine = [
-    'CUI_Italian_spending_dist', 
-    'CUI_Cafe_spending_dist', 
-    'CUI_American_spending_dist'
-]
 
-Other_Cuisine = [
-    'CUI_OTHER_spending_dist', 
-    'CUI_Thai_spending_dist', 
-    'CUI_Indian_spending_dist'
-]
+def pipeline(df, outlier_criteria, days_order, lead_order, columns_to_treat, features_to_scale, winsorization=True, scaling_method='standardization'):
+    df_preparation = df.copy()
 
-spending_behavior = ['Asian_Cuisine', 'Chinese_Cuisine', 'Western_Cuisine', 'Other_Cuisine', 'cuisine_diversity']
-timing_behavior = ['Weekdays', 'Sat_Orders', 'Sun_Orders', 'breakfast_orders', 'lunch_orders',
-                   'afternoon_snack_orders', 'dinner_orders', 'late_night_orders', 'time_of_day_diversity']
-customer_behavior = ['antiguity', 'R_recency_days', 'F_total_orders',
-                     'avg_products_p_order', 'avg_spend_p_order', 'M_total_spend']
+    invalid_rows = []
 
-all_perspectives = spending_behavior + timing_behavior + customer_behavior
+    for idx, row in df.iterrows():
+        if row['AverageLeadTime'] < 0:
+            invalid_rows.append((idx, "Your record has a 'AverageLeadTime' smaller than 0, please confirm this line."))
+        elif row['Age'] < 17:
+            invalid_rows.append((idx, "Your record has a 'Age' smaller than 18, please confirm this line. According to our policies we are not segmenting clients with age bellow 18."))
+        elif row['Age'] > 100:
+            invalid_rows.append((idx, "Your record has a 'Age' bigger than 100, please confirm this line. According to our policies we are not segmenting clients with age above 100."))
+        elif row['BookingsCheckedIn'] == 0:
+            invalid_rows.append((idx, "Your record has no Bookings Checked-In, please confirm this line. Otherwise it is not part of the segmentation, is a Potential Client."))
+        elif row['RoomNights'] == 0:
+            invalid_rows.append((idx, "Your record has no RoomNights, please confirm this line."))
+        elif row['PersonsNights'] == 0:
+            invalid_rows.append((idx, "Your record has no PersonsNights, please confirm this line."))
+        elif row[dow_columns].sum() != row.filter(regex=r'^HR_\d').sum():
+            invalid_rows.append((idx, "Your record's total orders in all hours and all days do not match, please confirm this line."))
+        elif row['first_order'] > row['last_order']:
+            invalid_rows.append((idx, "Your record's has first_order after last_order, please confirm this line."))
+
+    # If there are invalid rows, stop the process and show warnings
+    if invalid_rows:
+        warning_message = "\n".join([f"Row {idx}: {message}" for idx, message in invalid_rows])
+        raise ValueError(f"Invalid records detected:\n{warning_message}")
+    
+        # Step 1: Fit the scaler and transform
+    scaler = StandardScaler()
+    df_w_clusters['Age_scaled'] = scaler.fit_transform(df_w_clusters[['Age']])
+    df['Age_scaled'] = scaler.transform(df[['Age']])
+
+    # Step 2: Apply KNN Imputation on the scaled data
+    knn_imputer = KNNImputer(n_neighbors=5)
+    df_w_clusters['Age_scaled'] = knn_imputer.fit(df_w_clusters[['Age_scaled']])
+    df['Age_scaled'] = knn_imputer.fit_transform(df[['Age_scaled']])
+
+    # Step 3: Reverse the scaling to get the original age range
+    df_w_clusters['Age'] = scaler.inverse_transform(df_w_clusters[['Age_scaled']])
+    df['Age'] = scaler.inverse_transform(df[['Age_scaled']])
+
+    # Optional: Drop the intermediate scaled column if no longer needed
+    df_w_clusters.drop(columns=['Age_scaled'], inplace=True)
+    df.drop(columns=['Age_scaled'], inplace=True)
+    
+    # Remove outliers
+    df_preparation, manual_loss = remove_outliers_manual(df_preparation, outlier_criteria)
+    
+    # Winsorization if enabled
+    if winsorization:
+        df_preparation = apply_winsorization(df_preparation, columns_to_treat)
+
+    # Encoding
+    df_preparation['Origin'] = df_preparation['Nationality'].map(country_map)
+    df_preparation['Origin'] = df_preparation['Origin'].replace(
+        ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
+    df_preparation['DistributionChannel'] = df_preparation['DistributionChannel'].replace(
+        ['Travel Agent/Operator', 'GDS Systems'], 'Agent/Operator & GDS Systems')
+    df_preparation['BookingFrequency_bin'] = df_preparation['BookingFrequency'].map(
+        {'New Customer': 0, 'Returning Customer': 1})
+    
+    # Ordinal Encoding
+    encoder = OrdinalEncoder(categories=[days_order, lead_order])
+    df_preparation[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = encoder.fit_transform(
+        df_preparation[['DaysSinceCreation_Category', 'AverageLeadTime_Category']])
+    df_preparation[['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']] = df_preparation[
+        ['DaysSinceCreation_Encoded', 'AverageLeadTime_Encoded']].astype(int)
+    
+    # One-hot Encoding
+    encoded_df = one_hot_encode(df_preparation, ['DistributionChannel', 'Origin'])
+    
+    # Scaling
+    scaled_df = scale_data(encoded_df, features_to_scale, method=scaling_method)
+    
+    return scaled_df
+
+
+
+
+
+
+
 
 def prepare_data(df):
     # Step 1: Drop duplicates
@@ -381,17 +467,18 @@ def load_data():
     Load and preprocess datasets.
     """
     #--- ORIGINAL DATA / SYSTEM DATA TO EXTRACT COLUMN TYPES ------
+
     data_url = "https://raw.githubusercontent.com/CatarinaGN/DM_interface_design/refs/heads/main/data/DM2425_ABCDEats_DATASET.csv"
-    df = pd.read_csv(data_url, sep=',')
+    df_original = pd.read_csv(data_url, sep=',')
     data_url_w_clusters = "https://raw.githubusercontent.com/CatarinaGN/DM_interface_design/refs/heads/main/data/DM2425_ABCDEats_DATASET_w_Clusters.csv"
     df_w_clusters = pd.read_csv(data_url_w_clusters, sep=',', index_col='customer_id')
 
     # Set customer_id as the index 
-    df = df.drop_duplicates(subset='customer_id').set_index('customer_id')
+    df_original = df_original.set_index('ID', inplace = True)
 
-    return df, df_w_clusters
+    return df_original, df_w_clusters
 
-df, df_w_clusters = load_data()
+df_original, df_w_clusters = load_data()
 
 # ---- Extract Column Information ----
 def extract_column_info(df):
@@ -434,7 +521,7 @@ def extract_column_info(df):
 # ---- Main Application ----
 def main():
     # Extract column information for inputs
-    column_info = extract_column_info(df)
+    column_info = extract_column_info(df_original)
     #st.write("Loaded DataFrame:", df.head())
     #st.write("Column Info Extracted:", column_info)
 
@@ -444,7 +531,7 @@ def main():
 
     # Create inputs dynamically based on column types
     for col, info in column_info.items():
-        if col not in df.columns:
+        if col not in df_original.columns:
             continue
         if isinstance(info, list):  # Categorical
             if len(info) > 0:
