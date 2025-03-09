@@ -3,14 +3,14 @@ import streamlit as st
 st.title("Home Page")
 
 # Center the logo
-st.image("assets/logo.png", use_container_width=True)
+st.image("assets/logo(1).png", use_container_width=True)
 
 # Explanation text below the logo
 st.write("""
     
-This interface is designed for the **ABCDEats Marketing Team** to explore the company's cluster data through
+This interface is designed for **Hotel H's Marketing Team** to explore the hotels's customer segmentation data through
          visualization and analysis tools. The team can **compare clusters** by visualizing 
-         the distribution of both metric and categorical features. The available visualizations include histograms, 
+         the distribution of both numeric and categorical features. The available visualizations include histograms, 
          violin plots, radar plots, and bar plots, which can be customized to display up to four different graphs for 
          metric features, allowing for an in-depth comparison across clusters. For categorical features, bar plots are 
          available to show the distribution of values across clusters. Additionally, advanced dimensionality reduction 
@@ -24,7 +24,7 @@ This interface is designed for the **ABCDEats Marketing Team** to explore the co
           frequently associated cuisine types within each cluster, providing a view into customer preferences and
           helping with targeted promotions and marketing strategies.   
 
-It is also possible to **predict the classification of new records**. Predictions are made based on the relationship of the 
+It is also possible to **predict the segment of new customers**. Predictions are made based on the relationship of the 
          input record to the existing clusters. If the record aligns closely with a predefined cluster, it is assigned 
          to the cluster with the smallest distance using a **distance-based metric** (squared distances between the input record
           and all cluster centroids). However, if the record is identified as an **outlier**, it is reclassified using a 
@@ -39,3 +39,10 @@ In the last capability, you can make your own **suggestions** about the visualiz
         ideas you had during exploration. These are saved in a file so the team manager can organize the topics for discussion
         in upcoming meetings.      
 """)
+## 1st paragraph: done
+## 2nd paragraph: did we do rfm? did the mba give this much info?
+## 3rd paragraph: done
+## 4th paragraph: do we leave this?
+## 5th paragraph: should we leave it? the idea with suggestions was to be us making them, directly on the cluster prediction
+
+

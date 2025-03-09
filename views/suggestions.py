@@ -2,19 +2,19 @@ import streamlit as st
 import pandas as pd
 import os  # For checking file existence
 
-# Título da página
+# Page title
 st.title("📋 Your Suggestions")
 
-# Selecionar nome
+# Name selection
 name = st.selectbox("Select your name:", ["", "Alice", "Bob", "Charlie", "Dana", "Eve"])
 
-# Selecionar o assunto da sugestão
+# Subject selection
 subject = st.selectbox(
     "Select the subject of your suggestion:",
-    ["", "Visualization Ideas", "Cluster Strategies Ideas"]
+    ["", "Visualization Ideas", "Cluster Strategies Ideas", "Other Ideas"]
 )
 
-# Se o assunto for "Cluster Strategies Ideas", exibe a lista de clusters
+# Cluster selection (only for "Cluster Strategies Ideas")
 cluster = None
 if subject == "Cluster Strategies Ideas":
     cluster = st.selectbox(
@@ -22,7 +22,7 @@ if subject == "Cluster Strategies Ideas":
         ["", "Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5"]
     )
 
-# Caixa de texto para a sugestão
+# Suggestion text box
 suggestion = st.text_area("Write your suggestion here:")
 
 # Submit Button
