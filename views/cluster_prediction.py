@@ -19,7 +19,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler, PowerTransformer
 # Author : https://www.kaggle.com/gemartin/load-data-reduce-memory-usage and adapted to be able to check if the column is actually a float
 #or is an error like a code being a float column - if the column has Nan it will be still a float and will give us a warning.
 
-final_features = []
+final_features = ['Age','OtherRevenue','PersonsNights','Total_Revenue','RevenuePerPersonNight','AvgOccupancy','ADR','AverageLeadTime']
 
 
 def reduce_memory_usage(df):
@@ -211,7 +211,7 @@ def pipeline(df, df_w_clusters, outlier_criteria, days_order, lead_order, column
     
     # Step 1: Scale 'Age' using StandardScaler
     scaler = StandardScaler()
-    scaler.fit(df_w_clusters[['Age']])  # Fit only on df_w_clusters
+    df_w_clusters['Age_scaled'] = scaler.fit_transform(df_w_clusters[['Age']])
     df_preparation['Age_scaled'] = scaler.transform(df_preparation[['Age']])  # Transform df_preparation
 
     # Step 2: KNN Imputation on df_preparation
@@ -224,6 +224,7 @@ def pipeline(df, df_w_clusters, outlier_criteria, days_order, lead_order, column
 
     # Step 4: Drop the intermediate scaled column
     df_preparation.drop(columns=['Age_scaled'], inplace=True)
+    df_w_clusters.drop(columns=['Age_scaled'], inplace=True)
 
     #Feature engineering
     df_preparation['BookingFrequency'] = df_preparation['BookingsCheckedIn'] + df_preparation['BookingsCanceled'] + df_preparation['BookingsNoShowed']
@@ -271,15 +272,19 @@ def pipeline(df, df_w_clusters, outlier_criteria, days_order, lead_order, column
     df_preparation['DaysSinceCreation_Category'] = pd.cut(df_preparation['DaysSinceCreation'], bins=days_bins, labels=days_labels, include_lowest=True)
     df_preparation['AverageLeadTime_Category'] = pd.cut(df_preparation['AverageLeadTime'], bins=lead_bins, labels=lead_labels, include_lowest=True)
 
-
+    outliers = pd.DataFrame()
+    df_final = pd.DataFrame()
+    
     # Remove outliers
     df_final, manual_loss = remove_outliers_manual(df_preparation, outlier_criteria)
     
+      # Initialize as an empty DataFrame
+
     if manual_loss == 100.00:
         outliers = df_preparation.copy()
 
     if len(df_final) > 0:
-    # Winsorization if enabled
+        # Winsorization if enabled
         if winsorization:
             df_final = apply_winsorization(df_final, columns_to_treat)
 
@@ -288,14 +293,13 @@ def pipeline(df, df_w_clusters, outlier_criteria, days_order, lead_order, column
         df_final['Origin'] = df_final['Origin'].replace(
             ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
         df_to_encode = df_final.copy()
-    
+
     else:
         # Encoding
         outliers['Origin'] = outliers['Nationality'].map(country_map)
         outliers['Origin'] = outliers['Origin'].replace(
             ['Africa', 'Oceania', 'Antarctica', 'Asia', 'South_America'], 'Others')
         df_to_encode = outliers.copy()
-
 
     df_to_encode['DistributionChannel'] = df_to_encode['DistributionChannel'].replace(
         ['Travel Agent/Operator', 'GDS Systems'], 'Agent/Operator & GDS Systems')
@@ -363,10 +367,10 @@ def load_data():
 
     data_url = r"data/Case1_HotelCustomerSegmentation.csv"  # Use raw string or forward slashes
     df_original = pd.read_csv(data_url, sep=';', index_col='ID')  # Corrected index assignment
-    df_original.drop(columns=['NameHash', 'DocIDHash', 'MarketSegment'], inplace=True)
-    data_url_w_clusters = "data\Case1_HotelCustomerSegmentation.csv"
-    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=';')
-
+    df_original.drop(columns=['NameHash', 'DocIDHash', 'MarketSegment'], inplace=True)    
+    data_url_w_clusters = r"data/unscaled_df_umap.csv"
+    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=',')
+    df_w_clusters.drop(columns=['MarketSegment'], inplace=True) 
     # Set customer_id as the index 
     #df_original = df_original.set_index('ID', inplace = True)
 
@@ -486,8 +490,8 @@ def main():
             st.write("Your Input:", input_df)
             # Preprocess the input data
             # Assuming prepare_data is defined elsewhere
-            scaled_input, final_input, outlier = pipeline(input_df)
-           
+            final_input, outlier, scaled_input = pipeline(input_df, df_w_clusters, outlier_criteria, days_order, lead_order, columns_to_treat, final_features, winsorization=True, scaling_method='min-max')
+
             if len(outlier) == 0:
                 st.write("Data for Prediction (after transformation):", final_input.head())
                 # Find the nearest cluster in the dataset
