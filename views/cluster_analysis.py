@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.manifold import TSNE
 from utils import run_tsne, create_figure
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, PowerTransformer
 
 st.title("📊 Cluster Analysis")
 tab1, tab2, tab3 = st.tabs(['Description', 'Viewer', 'Your Analysis Notes'])
@@ -78,43 +79,25 @@ with tab1:
 
 with tab2:
     # Load data
-    data_url_w_clusters = "https://raw.githubusercontent.com/CatarinaGN/DM_interface_design/refs/heads/main/data/DM2425_ABCDEats_DATASET_w_Clusters.csv"
-    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=',', index_col='customer_id')
 
-    spending_behavior = ['Asian_Cuisine', 'Chinese_Cuisine', 'Western_Cuisine', 'Other_Cuisine', 'cuisine_diversity']
-    timing_behavior = [
-        'Weekdays', 'Sat_Orders', 'Sun_Orders', 'breakfast_orders', 'lunch_orders',
-        'afternoon_snack_orders', 'dinner_orders', 'late_night_orders', 'time_of_day_diversity'
-    ]
-    customer_behavior = [
-        'antiguity', 'R_recency_days', 'F_total_orders',
-        'avg_products_p_order', 'avg_spend_p_order', 'M_total_spend'
-    ]
+    data_url_w_clusters = r"data/unscaled_df_umap.csv"
+    df_w_clusters = pd.read_csv(data_url_w_clusters, sep=',')
+    df_w_clusters.drop(columns=['MarketSegment'], inplace=True)
 
-    all_perspectives = spending_behavior + timing_behavior + customer_behavior
+    all_perspectives = ['Age', 'DaysSinceCreation', 'AverageLeadTime', 'LodgingRevenue',
+                        'BookingsCanceled', 'BookingsNoShowed', 'BookingsCheckedIn', 'BookingSuccessRate',
+                        'OtherRevenue', 'Total_Revenue', 'PersonsNights', 'RoomNights',
+                        'SpendingPerBooking', 'RevenuePerPersonNight', 'AvgOccupancy', 'ADR','KmLabels']
 
-    analysis_columns = ['vendor_loyalty', 'Other_Cuisine','M_total_spend','lunch_orders', 'R_recency_days', 'avg_products_p_order', 'Sun_Orders',
-                        'Sat_Orders', 'Chinese_Cuisine', 'avg_spend_p_order','time_of_day_diversity', 'Asian_Cuisine', 'cuisine_diversity',
-                        'breakfast_orders', 'Western_Cuisine', 'late_night_orders','afternoon_snack_orders', 'chain_preference_ratio', 'antiguity','F_total_orders', 'dinner_orders',
-                        'customer_age', 'vendor_count', 'product_count', 'is_chain','first_order', 'last_order','CUI_American', 'CUI_Asian', 'CUI_Beverages', 'CUI_Cafe',
-                        'CUI_Chicken Dishes', 'CUI_Chinese', 'CUI_Desserts', 'CUI_Healthy','CUI_Indian', 'CUI_Italian', 'CUI_Japanese', 'CUI_Noodle Dishes','CUI_OTHER', 
-                        'CUI_Street Food / Snacks', 'CUI_Thai', 'Mon_Orders','Tue_Orders', 'Wed_Orders', 'Thu_Orders', 'Fri_Orders', 'HR_0', 'HR_1',
-                        'HR_2', 'HR_3', 'HR_4', 'HR_5', 'HR_6', 'HR_7', 'HR_8', 'HR_9', 'HR_10','HR_11', 'HR_12', 'HR_13', 'HR_14', 'HR_15', 'HR_16', 'HR_17', 'HR_18',
-                        'HR_19', 'HR_20', 'HR_21', 'HR_22', 'HR_23', 'avg_days_btw_orders','CUI_American_spending_dist', 'CUI_Asian_spending_dist',
-                        'CUI_Beverages_spending_dist', 'CUI_Cafe_spending_dist','CUI_Chicken Dishes_spending_dist', 'CUI_Chinese_spending_dist',
-                        'CUI_Desserts_spending_dist', 'CUI_Healthy_spending_dist','CUI_Indian_spending_dist', 'CUI_Italian_spending_dist','CUI_Japanese_spending_dist',
-                        'CUI_Noodle Dishes_spending_dist','CUI_OTHER_spending_dist', 'CUI_Street Food / Snacks_spending_dist',
-                        'CUI_Thai_spending_dist', 'weekday_avg_orders','weekend_avg_orders', 'day_of_week_diversity', 'final_labels']
+    analysis_columns = ['Age', 'DaysSinceCreation', 'AverageLeadTime', 'LodgingRevenue',
+                        'BookingsCanceled', 'BookingsNoShowed', 'BookingsCheckedIn', 'BookingSuccessRate',
+                        'OtherRevenue', 'Total_Revenue', 'PersonsNights', 'RoomNights',
+                        'SpendingPerBooking', 'RevenuePerPersonNight', 'AvgOccupancy', 'ADR','KmLabels']
 
-    hours = ['HR_0', 'HR_1', 'HR_2', 'HR_3', 'HR_4', 'HR_5', 'HR_6','HR_7', 'HR_8', 'HR_9', 
-             'HR_10', 'HR_11', 'HR_12', 'HR_13', 'HR_14','HR_15', 'HR_16', 'HR_17', 'HR_18', 
-             'HR_19', 'HR_20', 'HR_21', 'HR_22','HR_23']
-    cuisines = ['CUI_American', 'CUI_Asian', 'CUI_Beverages', 'CUI_Cafe','CUI_Chicken Dishes', 'CUI_Chinese', 
-                'CUI_Desserts', 'CUI_Healthy','CUI_Indian', 'CUI_Italian', 'CUI_Japanese', 'CUI_Noodle Dishes',
-                'CUI_OTHER', 'CUI_Street Food / Snacks', 'CUI_Thai']
-    days = ['Sun_Orders', 'Mon_Orders', 'Tue_Orders', 'Wed_Orders', 'Thu_Orders', 'Fri_Orders','Sat_Orders']
-
-    categorical = ['customer_region', 'last_promo', 'payment_method', 'promo_used']
+    categorical = ['DistributionChannel','BookingFrequency','DaysSinceCreation_Category','AverageLeadTime_Category','Origin',
+                   'BookingFrequency_bin', 'SRHighFloor', 'SRLowFloor', 'TotalSpecialRequests','SRAccessibleRoom', 'SRMediumFloor',
+                   'SRBathtub','SRShower', 'SRCrib','SRKingSizeBed', 'SRTwinBed', 'SRNearElevator', 'SRAwayFromElevator',
+                   'SRNoAlcoholInMiniBar', 'SRQuietRoom', 'SRFloor', 'SRBed','SRNoisePreference','SRBathroom']
 
     ## ----- Cluster Comparison -----
     ### ----- Histograms -----
@@ -330,7 +313,7 @@ with tab2:
     st.header("🔍 Analysis Options")
     analysis = st.selectbox(
         "Choose your analysis:",
-        ["Cluster Comparison", "Individual Cluster Analysis"]
+        ["Cluster Comparison"]
     )
 
     # Note-taking section
@@ -358,26 +341,27 @@ with tab2:
                 ["Histogram", "Violin Plot", "Radar Chart", "Table", "t-SNE Visualization"]
             )
 
+
             if metric_option == "Histogram":
-                plot_interactive_histograms(df_w_clusters, 'final_labels')  # Plot Histogram
+                plot_interactive_histograms(df_w_clusters, 'KmLabels')  # Plot Histogram
             elif metric_option == "Violin Plot":
-                plot_interactive_violin(df_w_clusters, 'final_labels')  # Plot Violin
+                plot_interactive_violin(df_w_clusters, 'KmLabels')  # Plot Violin
             elif metric_option == "Radar Chart":
-                plot_interactive_radar(df_w_clusters, 'final_labels')  # Plot Radar
+                plot_interactive_radar(df_w_clusters, 'KmLabels')  # Plot Radar
             elif metric_option == "Table":
-                display_mean_table(df_w_clusters, 'final_labels')  # Plot Table
+                display_mean_table(df_w_clusters, 'KmLabels')  # Plot Table
             elif metric_option == "t-SNE Visualization":
                 x_for_tsne = df_w_clusters[all_perspectives]
                 data_for_tsne = df_w_clusters.copy()
                 data_for_tsne.reset_index(inplace=True)
-                final_labels = data_for_tsne['final_labels']
+                final_labels = data_for_tsne['KmLabels']
 
                 st.sidebar.title('TSNE Visualization Settings')
                 dimension = st.sidebar.selectbox('Choose the dimension of embedded space:', [2, 3], index=0)
 
                 # --- Scale the Data ---
                 from sklearn.preprocessing import StandardScaler
-                scaler = StandardScaler()
+                scaler = MinMaxScaler()
                 scaled_data = scaler.fit_transform(x_for_tsne)
 
                 # --- Run t-SNE with Spinner ---
@@ -411,128 +395,8 @@ with tab2:
             # ----- Application -----
 
             if metric_option == "Bar Plot":
-                plot_interactive_bar(df_w_clusters, 'final_labels')  # Plot bar plot  
-
-    elif analysis == "Individual Cluster Analysis":
-        # Handle Individual Cluster Analysis logic
-
-        analysis_type = st.sidebar.selectbox("Choose Analysis Type:", ["RFM Analysis", "Market Basket Analysis"])
-        selected_cluster = st.sidebar.selectbox("Select a Cluster:", sorted(df_w_clusters['final_labels'].unique()))
-
-        # Filter data by selected cluster
-        cluster_data = df_w_clusters[df_w_clusters['final_labels'] == selected_cluster]
-
-        if analysis_type == "RFM Analysis":
-            st.header(f"📊 RFM Analysis for Cluster {selected_cluster}")
-            # RFM function to assign RFM scores based on quartiles
-            def RFMScore(x, col):
-                if x <= col.quantile(0.25):
-                    return '1'
-                elif x <= col.quantile(0.5):
-                    return '2'
-                elif x <= col.quantile(0.75):
-                    return '3'
-                else:
-                    return '4'
-            #Previous notebook 
-
-            # Calculate RFM scores
-            cluster_data['RScore'] = cluster_data['R_recency_days'].apply(RFMScore, col=cluster_data['R_recency_days'])
-            cluster_data['FScore'] = cluster_data['F_total_orders'].apply(RFMScore, col=cluster_data['F_total_orders'])
-            cluster_data['MScore'] = cluster_data['M_total_spend'].apply(RFMScore, col=cluster_data['M_total_spend'])
-            cluster_data['RFMScore'] = cluster_data['RScore'] + cluster_data['FScore'] + cluster_data['MScore']
-
-            # Segment customers
-            def segment_customers(score):
-                R, F, M = score[0], score[1], score[2]  # Unpack the RFM score components
-                
-                # Define segment names based on RFM values
-                if R == '4' and F in ['1', '2'] and M in ['1', '2']:
-                    return 'Lost Customers'  # Low recency, low frequency, low monetary
-                elif R == '1' and F in ['3', '4'] and M in ['3', '4']:
-                    return 'Champions'  # Recent, frequent, and high spend
-                elif R == '1' and F in ['1', '2'] and M in ['3', '4']:
-                    return 'Potential Loyalists'  # Recent but low frequency, high spend
-                elif R == '2' and F in ['3', '4'] and M in ['3', '4']:
-                    return 'Loyal Customers'  # Recent, frequent, and high spend but not the most recent
-                elif R in ['2', '3'] and F in ['1', '2'] and M in ['1', '2']:
-                    return 'At Risk'  # Not recent, infrequent, low spend
-                elif R == '2' and F in ['1', '2'] and M in ['3', '4']:
-                    return 'Potential Loyalists'  # Moderate recency, low frequency, high spend
-                elif R in ['3', '4'] and F in ['1', '2']:
-                    return 'Hibernating Customers'  # Old, infrequent, mid spend
-                else:
-                    return 'Unknown Segment'  # For any other unforeseen cases
-                
-            cluster_data['CustomerSegment'] = cluster_data['RFMScore'].apply(segment_customers)
-
-            # Aggregate RFM statistics
-            RFM_segments = cluster_data.groupby(['CustomerSegment']).agg(
-                NrCustomers=('CustomerSegment', 'size'),
-                avgRecency=('R_recency_days', 'mean'),
-                avgFrequency=('F_total_orders', 'mean'),
-                avgMonetary=('M_total_spend', 'mean')
-            ).fillna(0)
-
-            st.subheader("RFM Segments Overview")
-            st.dataframe(RFM_segments)
-
-            # Optional: Additional visualizations
-            st.subheader("Customer Distribution by Region")
-            region_segment_distribution = cluster_data.groupby(['customer_region', 'CustomerSegment']).size().unstack(fill_value=0)
-            st.dataframe(region_segment_distribution)
-
-            st.subheader("Age Distribution by Segment")
-            age_distribution = cluster_data.groupby('CustomerSegment')['customer_age'].mean()
-            st.bar_chart(age_distribution)
-
-            st.subheader("Order Distribution by Day of the Week")
-            order_days_segment = cluster_data.groupby('CustomerSegment')[['Sun_Orders', 'Mon_Orders', 'Tue_Orders', 
-                                                                        'Wed_Orders', 'Thu_Orders', 'Fri_Orders', 
-                                                                        'Sat_Orders']].mean()
-            st.dataframe(order_days_segment)
-
-        elif analysis_type == "Market Basket Analysis":
-            st.sidebar.subheader("Market Basket Analysis Settings")
-            confidence_threshold = st.sidebar.slider(
-                "Select Confidence Threshold:", 
-                min_value=0.10, max_value=1.0, value=0.40, step=0.05)
-            
-            st.header(f"🛒 Market Basket Analysis for Cluster {selected_cluster}")
-
-            from mlxtend.frequent_patterns import apriori, association_rules
-
-            # Step 1: Filter the data for cuisine diversity and select relevant columns
-            mba_data = cluster_data[all_perspectives + cuisines + ['final_labels']]
-            cuisine_data = mba_data[mba_data['cuisine_diversity'] > 1].copy()
-            cuisine_columns = [cuisine for cuisine in cuisines if cuisine != 'CUI_OTHER']
-            cuisine_data = cuisine_data[cuisine_columns + ['final_labels']]
-            
-            # Drop the 'final_labels' column for MBA
-            cluster_data_mba = cuisine_data.drop(columns=['final_labels'])
-            
-            # Ensure the data is boolean (required for Apriori)
-            cluster_data_bool = cluster_data_mba.astype(bool)
-            
-            # Apply Apriori algorithm
-            frequent_itemsets = apriori(cluster_data_bool, min_support=0.01, use_colnames=True)
-            
-            # Generate association rules
-            rules = association_rules(frequent_itemsets, metric="support", min_threshold=0.10)
-            
-            # Filter rules by lift > 1 and confidence > thereshold
-            filtered_rules = rules[(rules['lift'] > 1) & (rules['confidence'] > confidence_threshold)]
-            
-            # Sort rules by confidence and support
-            filtered_rules.sort_values(by=['confidence', 'support'], ascending=False, inplace=True)
-            
-            # Step 3: Display Results
-            if not filtered_rules.empty:
-                st.write("Top 5 Association Rules:")
-                filtered_rules_display = filtered_rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']].head(5)
-                st.dataframe(filtered_rules_display)
-            else:
-                st.write("No significant association rules found for this cluster.")
+                plot_interactive_bar(df_w_clusters, 'KmLabels')  # Plot bar plot  
+        
 
 
 with tab3:
