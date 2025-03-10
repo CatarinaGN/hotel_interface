@@ -17,13 +17,6 @@ This interface is designed for **Hotel H's Marketing Team** to explore the hotel
          techniques like t-SNE enable users to view the data in both 2D and 3D spaces, making it easier to understand 
          cluster relationships and patterns.
 
-**For each cluster**, the interface also offers specialized analyses, including **RFM (Recency, Frequency, Monetary) analysis**
-          and **Market Basket Analysis (MBA)**. RFM analysis segments customers based on their purchasing behavior, categorizing
-          them into segments such as Champions, Loyal Customers, and At-Risk Customers. The team can explore these segments
-          to better understand customer behavior within each cluster. Market Basket Analysis, on the other hand, identifies
-          frequently associated cuisine types within each cluster, providing a view into customer preferences and
-          helping with targeted promotions and marketing strategies.   
-
 It is also possible to **predict the segment of new customers**. Predictions are made based on the relationship of the 
          input record to the existing clusters. If the record aligns closely with a predefined cluster, it is assigned 
          to the cluster with the smallest distance using a **distance-based metric** (squared distances between the input record
@@ -40,9 +33,7 @@ In the last capability, you can make your own **suggestions** about the visualiz
         in upcoming meetings.      
 """)
 ## 1st paragraph: done
-## 2nd paragraph: did we do rfm? did the mba give this much info?
 ## 3rd paragraph: done
-## 4th paragraph: do we leave this?
-## 5th paragraph: should we leave it? the idea with suggestions was to be us making them, directly on the cluster prediction
+## 4th paragraph: do we leave this? yes we have :p
 
 
